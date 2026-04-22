@@ -238,6 +238,37 @@ def _normalize_text(value: str) -> str:
     return no_diacritics.lower().strip()
 
 
+def _filter_sales_rows(
+    query: Optional[str] = None,
+    field: str = "name",
+) -> list[dict[str, str]]:
+    sales_rows = _read_csv_rows(SALES_FILE)
+    cleaned_query = (query or "").strip()
+
+    if not cleaned_query:
+        return sales_rows
+
+    normalized_query = _normalize_text(cleaned_query)
+    return [
+        row
+        for row in sales_rows
+        if normalized_query in _normalize_text(row.get(field, ""))
+    ]
+
+
+def _serialize_sales_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "name": row.get("name", ""),
+            "shop": row.get("shop", ""),
+            "price": row.get("price", ""),
+            "amount": row.get("amount", ""),
+            "validity": row.get("validity", ""),
+        }
+        for row in rows
+    ]
+
+
 def _get_category_files() -> list[Path]:
     files = sorted(PRODUCTS_DIR.glob("*.csv"), key=lambda p: p.stem)
     if not files:
@@ -363,29 +394,7 @@ def get_products_by_categories(categories: list[str]) -> dict[str, Any]:
 @mcp.tool()
 def get_sales(query: Optional[str] = None) -> dict[str, Any]:
     """Return all sales or filter by partial case/accent-insensitive product name."""
-    sales_rows = _read_csv_rows(SALES_FILE)
-    cleaned_query = (query or "").strip()
-
-    if cleaned_query:
-        normalized_query = _normalize_text(cleaned_query)
-        filtered_sales = [
-            row
-            for row in sales_rows
-            if normalized_query in _normalize_text(row.get("name", ""))
-        ]
-    else:
-        filtered_sales = sales_rows
-
-    sales = [
-        {
-            "name": row.get("name", ""),
-            "shop": row.get("shop", ""),
-            "price": row.get("price", ""),
-            "amount": row.get("amount", ""),
-            "validity": row.get("validity", ""),
-        }
-        for row in filtered_sales
-    ]
+    sales = _serialize_sales_rows(_filter_sales_rows(query=query, field="name"))
 
     data = {
         "query": query,
@@ -393,6 +402,19 @@ def get_sales(query: Optional[str] = None) -> dict[str, Any]:
         "sales": sales,
     }
     return _payload("get_sales", input_echo={"query": query}, data=data)
+
+
+@mcp.tool()
+def get_sales_by_retailer(query: Optional[str] = None) -> dict[str, Any]:
+    """Return all sales or filter by partial case/accent-insensitive retailer/shop name."""
+    sales = _serialize_sales_rows(_filter_sales_rows(query=query, field="shop"))
+
+    data = {
+        "query": query,
+        "total_sales": len(sales),
+        "sales": sales,
+    }
+    return _payload("get_sales_by_retailer", input_echo={"query": query}, data=data)
 
 
 @mcp.custom_route("/healthz", methods=["GET"])
@@ -403,6 +425,13 @@ async def healthz(_: Request) -> JSONResponse:
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "service": "kupi-scraper-mcp", "dummy": True})
+
+
+@mcp.custom_route("/sales/by-retailer", methods=["GET"])
+async def sales_by_retailer(request: Request) -> JSONResponse:
+    query = request.query_params.get("query")
+    payload = get_sales_by_retailer(query=query)
+    return JSONResponse(payload)
 
 
 def run_streamable_http() -> None:

@@ -11,6 +11,7 @@ from kupi_scraper_mcp.server import (
     get_categories,
     get_products_by_categories,
     get_sales,
+    get_sales_by_retailer,
 )
 
 
@@ -138,3 +139,32 @@ def test_get_sales_query_coca_matches_case_insensitive() -> None:
     assert payload["data"]["total_sales"] == len(sales)
     assert len(sales) > 0
     assert all("coca" in _normalize_text(item["name"]) for item in sales)
+
+
+def test_get_sales_by_retailer_without_query_returns_all_sales() -> None:
+    payload = get_sales_by_retailer()
+    _assert_common_payload(payload, "get_sales_by_retailer", {"query": None})
+
+    expected_count = len(_read_sales_rows())
+    assert payload["data"]["total_sales"] == expected_count
+    assert len(payload["data"]["sales"]) == expected_count
+
+
+def test_get_sales_by_retailer_query_tesco_matches_case_insensitive() -> None:
+    payload = get_sales_by_retailer("tesCO")
+    _assert_common_payload(payload, "get_sales_by_retailer", {"query": "tesCO"})
+
+    sales = payload["data"]["sales"]
+    assert payload["data"]["total_sales"] == len(sales)
+    assert len(sales) > 0
+    assert all("tesco" in _normalize_text(item["shop"]) for item in sales)
+
+
+def test_get_sales_by_retailer_query_bene_matches_diacritics_insensitive() -> None:
+    payload = get_sales_by_retailer("bene napoje")
+    _assert_common_payload(payload, "get_sales_by_retailer", {"query": "bene napoje"})
+
+    sales = payload["data"]["sales"]
+    assert payload["data"]["total_sales"] == len(sales)
+    assert len(sales) > 0
+    assert all("bene napoje" in _normalize_text(item["shop"]) for item in sales)

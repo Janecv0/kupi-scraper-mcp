@@ -32,6 +32,20 @@ def test_mcp_accepts_valid_api_key() -> None:
     assert valid.status_code not in {401, 403}
 
 
+def test_sales_by_retailer_route_returns_filtered_sales() -> None:
+    app = build_streamable_http_asgi_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/sales/by-retailer", params={"query": "Tesco"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tool"] == "get_sales_by_retailer"
+    assert body["input"] == {"query": "Tesco"}
+    assert body["data"]["total_sales"] > 0
+    assert all("tesco" in item["shop"].lower() for item in body["data"]["sales"])
+
+
 def test_port_resolution_uses_port_env_first(monkeypatch) -> None:
     monkeypatch.setenv("PORT", "9001")
     monkeypatch.setenv("FASTMCP_PORT", "7777")

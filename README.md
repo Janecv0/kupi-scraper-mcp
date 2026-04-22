@@ -12,6 +12,7 @@ Runtime target: Python `3.14.4`.
   - `get_all_products`
   - `get_products_by_categories`
   - `get_sales`
+  - `get_sales_by_retailer`
 - Optional API key auth for HTTP transports.
 - Public health check endpoint at `/healthz`.
 - Dockerfile optimized for Railway deployment.
@@ -49,6 +50,10 @@ All tool responses use this envelope:
 - `get_sales(query: str | None = None)`
   - Returns all sales rows from `slevy_all.csv` when query is empty.
   - When query is provided, filters by partial product-name match (case-insensitive and diacritic-insensitive).
+  - Sales fields: `name`, `shop`, `price`, `amount`, `validity`.
+- `get_sales_by_retailer(query: str | None = None)`
+  - Returns all sales rows from `slevy_all.csv` when query is empty.
+  - When query is provided, filters by partial retailer/shop match (case-insensitive and diacritic-insensitive).
   - Sales fields: `name`, `shop`, `price`, `amount`, `validity`.
 
 ## Project Layout
@@ -110,10 +115,12 @@ kupi-scraper-mcp stdio
 
 Streamable HTTP mode:
 - MCP endpoint: `/mcp`
+- Retailer sales endpoint: `/sales/by-retailer?query=Tesco`
 - Health endpoint: `/healthz`
 
 SSE mode:
 - SSE endpoint: `/sse`
+- Retailer sales endpoint: `/sales/by-retailer?query=Tesco`
 - Health endpoint: `/healthz`
 
 `/healthz` is intentionally public even when API key auth is enabled.
