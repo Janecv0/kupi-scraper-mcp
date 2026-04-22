@@ -1,0 +1,12 @@
+﻿__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.dist/
+build/
+.tmp/
+.uv-cache/
