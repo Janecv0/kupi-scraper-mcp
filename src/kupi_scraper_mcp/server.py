@@ -1,5 +1,9 @@
-﻿import os
+import os
 import secrets
+import unicodedata
+from csv import DictReader
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -9,14 +13,13 @@ from starlette.responses import JSONResponse, Response
 
 API_KEY_ENV_VAR = "KUPI_MCP_API_KEY"
 API_KEY_HEADER_ENV_VAR = "KUPI_MCP_API_KEY_HEADER"
-DUMMY_TIMESTAMP = "2026-01-01T00:00:00Z"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PRODUCTS_DIR = PROJECT_ROOT / "produkty"
+SALES_FILE = PROJECT_ROOT / "slevy_all.csv"
 
 mcp = FastMCP(
     name="kupi-scraper-mcp",
-    instructions=(
-        "Dummy scraper MCP server bootstrap. "
-        "Replace tool internals with real scraping logic in the next iteration."
-    ),
+    instructions="MCP server exposing product and sale data from local CSV files.",
 )
 
 
@@ -164,83 +167,189 @@ def build_sse_asgi_app(
     return app
 
 
-def _dummy_payload(tool_name: str, input_echo: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _payload(tool_name: str, input_echo: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     return {
         "tool": tool_name,
-        "dummy": True,
-        "timestamp": DUMMY_TIMESTAMP,
+        "dummy": False,
+        "timestamp": _utc_timestamp(),
         "input": input_echo,
         "data": data,
     }
 
 
+def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = DictReader(csv_file, delimiter=";")
+        rows: list[dict[str, str]] = []
+        for row in reader:
+            normalized_row: dict[str, str] = {}
+            for key, value in row.items():
+                if key is None:
+                    continue
+                normalized_row[str(key).strip()] = (value or "").strip()
+            rows.append(normalized_row)
+        return rows
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    no_diacritics = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return no_diacritics.lower().strip()
+
+
+def _get_category_files() -> list[Path]:
+    return sorted(PRODUCTS_DIR.glob("*.csv"), key=lambda p: p.stem)
+
+
+def _load_products_from_categories(categories: Optional[set[str]] = None) -> list[dict[str, Any]]:
+    products: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str, str]] = set()
+
+    for csv_file in _get_category_files():
+        source_category = csv_file.stem
+        if categories is not None and source_category not in categories:
+            continue
+
+        for row in _read_csv_rows(csv_file):
+            name = row.get("name", "")
+            manufacturer = row.get("manufacturer", "")
+            category = row.get("category") or None
+
+            dedupe_key = (
+                _normalize_text(source_category),
+                _normalize_text(name),
+                _normalize_text(manufacturer),
+                _normalize_text(category or ""),
+            )
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+
+            products.append(
+                {
+                    "name": name,
+                    "manufacturer": manufacturer,
+                    "source_category": source_category,
+                    "category": category,
+                }
+            )
+
+    products.sort(
+        key=lambda item: (
+            item["source_category"],
+            _normalize_text(item["name"]),
+            _normalize_text(item["manufacturer"]),
+            _normalize_text(item["category"] or ""),
+        )
+    )
+    return products
+
+
+def _resolve_categories(categories: list[str]) -> set[str]:
+    available_categories = [path.stem for path in _get_category_files()]
+    available_map = {_normalize_text(category): category for category in available_categories}
+
+    requested: set[str] = set()
+    unknown_categories: list[str] = []
+    for value in categories:
+        normalized = _normalize_text(value)
+        matched = available_map.get(normalized)
+        if matched is None:
+            unknown_categories.append(value)
+            continue
+        requested.add(matched)
+
+    if unknown_categories:
+        available_text = ", ".join(sorted(available_categories))
+        unknown_text = ", ".join(unknown_categories)
+        raise ValueError(f"Unknown categories: {unknown_text}. Allowed categories: {available_text}.")
+
+    return requested
+
+
 @mcp.tool()
-def get_all_data() -> dict[str, Any]:
-    """Return a deterministic dummy dataset for full data retrieval."""
+def get_categories() -> dict[str, Any]:
+    """Return all category names and product counts per category file."""
+    category_counts: dict[str, int] = {}
+    for csv_file in _get_category_files():
+        category_counts[csv_file.stem] = len(_read_csv_rows(csv_file))
+
+    categories = sorted(category_counts.keys())
     data = {
-        "total_items": 3,
-        "items": [
-            {"brand": "Kupi", "product": "Water", "week": "2026-W01", "price": 1.99},
-            {"brand": "Kupi", "product": "Sparkling Water", "week": "2026-W01", "price": 2.49},
-            {"brand": "Mattoni", "product": "Mineral Water", "week": "2026-W01", "price": 2.29},
-        ],
+        "total_categories": len(categories),
+        "categories": categories,
+        "counts_by_category": {category: category_counts[category] for category in categories},
     }
-    return _dummy_payload("get_all_data", input_echo={}, data=data)
+    return _payload("get_categories", input_echo={}, data=data)
 
 
 @mcp.tool()
-def get_all_data_per_week(week: str) -> dict[str, Any]:
-    """Return a deterministic dummy dataset filtered by week."""
+def get_all_products() -> dict[str, Any]:
+    """Return deduplicated products from all category files."""
+    products = _load_products_from_categories()
     data = {
-        "week": week,
-        "total_items": 2,
-        "items": [
-            {"brand": "Kupi", "product": "Water", "week": week, "price": 1.99},
-            {"brand": "Mattoni", "product": "Mineral Water", "week": week, "price": 2.29},
-        ],
+        "total_products": len(products),
+        "products": products,
     }
-    return _dummy_payload("get_all_data_per_week", input_echo={"week": week}, data=data)
+    return _payload("get_all_products", input_echo={}, data=data)
 
 
 @mcp.tool()
-def get_availiable_data_brand() -> dict[str, Any]:
-    """Return deterministic dummy list of available brands."""
+def get_products_by_categories(categories: list[str]) -> dict[str, Any]:
+    """Return deduplicated products filtered by source categories."""
+    requested_categories = _resolve_categories(categories)
+    products = _load_products_from_categories(categories=requested_categories)
+    sorted_requested = sorted(requested_categories)
+
     data = {
-        "total_brands": 3,
-        "brands": ["Kupi", "Mattoni", "Dobra Voda"],
+        "categories": sorted_requested,
+        "total_products": len(products),
+        "products": products,
     }
-    return _dummy_payload("get_availiable_data_brand", input_echo={}, data=data)
-
-
-@mcp.tool()
-def get_availiable_data_product(brand: Optional[str] = None) -> dict[str, Any]:
-    """Return deterministic dummy list of products, optionally filtered by brand."""
-    all_products = {
-        "Kupi": ["Water", "Sparkling Water"],
-        "Mattoni": ["Mineral Water", "Flavored Water"],
-        "Dobra Voda": ["Still Water"],
-    }
-
-    if brand:
-        products = all_products.get(brand, [])
-        data = {
-            "brand": brand,
-            "total_products": len(products),
-            "products": products,
-        }
-    else:
-        merged = sorted({product for items in all_products.values() for product in items})
-        data = {
-            "brand": None,
-            "total_products": len(merged),
-            "products": merged,
-        }
-
-    return _dummy_payload(
-        "get_availiable_data_product",
-        input_echo={"brand": brand},
+    return _payload(
+        "get_products_by_categories",
+        input_echo={"categories": categories},
         data=data,
     )
+
+
+@mcp.tool()
+def get_sales(query: Optional[str] = None) -> dict[str, Any]:
+    """Return all sales or filter by partial case/accent-insensitive product name."""
+    sales_rows = _read_csv_rows(SALES_FILE)
+    cleaned_query = (query or "").strip()
+
+    if cleaned_query:
+        normalized_query = _normalize_text(cleaned_query)
+        filtered_sales = [
+            row
+            for row in sales_rows
+            if normalized_query in _normalize_text(row.get("name", ""))
+        ]
+    else:
+        filtered_sales = sales_rows
+
+    sales = [
+        {
+            "name": row.get("name", ""),
+            "shop": row.get("shop", ""),
+            "price": row.get("price", ""),
+            "amount": row.get("amount", ""),
+            "validity": row.get("validity", ""),
+        }
+        for row in filtered_sales
+    ]
+
+    data = {
+        "query": query,
+        "total_sales": len(sales),
+        "sales": sales,
+    }
+    return _payload("get_sales", input_echo={"query": query}, data=data)
 
 
 @mcp.custom_route("/healthz", methods=["GET"])

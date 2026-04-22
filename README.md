@@ -1,22 +1,55 @@
-﻿# kupi-scraper-mcp
+# kupi-scraper-mcp
 
-Railway-ready MCP server bootstrap for internet scraping workflows.
-
-This version provides dummy tools so you can integrate clients first, then plug in real scraping logic later.
+Railway-ready MCP server exposing product and sales data from local CSV files.
 
 Runtime target: Python `3.14.4`.
 
 ## Features
 
 - FastMCP server with three transports: `streamable-http`, `sse`, and `stdio`.
-- Dummy scraper-shaped tools:
-  - `get_all_data`
-  - `get_all_data_per_week`
-  - `get_availiable_data_brand`
-  - `get_availiable_data_product`
+- CSV-backed MCP tools:
+  - `get_categories`
+  - `get_all_products`
+  - `get_products_by_categories`
+  - `get_sales`
 - Optional API key auth for HTTP transports.
 - Public health check endpoint at `/healthz`.
 - Dockerfile optimized for Railway deployment.
+
+## Data Sources
+
+- Product category files: `produkty/*.csv`
+- Sales file: `slevy_all.csv`
+- CSV parsing: UTF-8 (`utf-8-sig`) with `;` delimiter.
+
+## Tool Contract
+
+All tool responses use this envelope:
+
+```json
+{
+  "tool": "tool_name",
+  "dummy": false,
+  "timestamp": "ISO-8601 UTC",
+  "input": {},
+  "data": {}
+}
+```
+
+### Tool Details
+
+- `get_categories()`
+  - Returns sorted category names (CSV filename stems) and product counts per category.
+- `get_all_products()`
+  - Returns deduplicated products from all category files.
+  - Product fields: `name`, `manufacturer`, `source_category`, `category` (nullable).
+- `get_products_by_categories(categories: list[str])`
+  - Returns deduplicated products filtered by the selected file categories.
+  - Raises a validation error for unknown categories and includes allowed values.
+- `get_sales(query: str | None = None)`
+  - Returns all sales rows from `slevy_all.csv` when query is empty.
+  - When query is provided, filters by partial product-name match (case-insensitive and diacritic-insensitive).
+  - Sales fields: `name`, `shop`, `price`, `amount`, `validity`.
 
 ## Project Layout
 
@@ -29,6 +62,9 @@ tests/
   test_tools.py
   test_transport.py
   test_cli.py
+produkty/
+  *.csv
+slevy_all.csv
 Dockerfile
 pyproject.toml
 ```
@@ -129,20 +165,6 @@ mcpServers:
     url: https://your-railway-domain/sse
     headers:
       x-api-key: "${KUPI_MCP_API_KEY}"
-```
-
-## Dummy Tool Contract
-
-All tool responses keep a stable structure:
-
-```json
-{
-  "tool": "tool_name",
-  "dummy": true,
-  "timestamp": "2026-01-01T00:00:00Z",
-  "input": {},
-  "data": {}
-}
 ```
 
 ## Tests
