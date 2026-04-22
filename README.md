@@ -102,6 +102,9 @@ kupi-scraper-mcp stdio
 - `FASTMCP_HOST`: bind host (default `0.0.0.0`)
 - `KUPI_MCP_API_KEY`: optional API key to protect HTTP MCP endpoints
 - `KUPI_MCP_API_KEY_HEADER`: API key header name (default `x-api-key`)
+- `KUPI_MCP_DATA_DIR`: base directory containing `produkty/` and `slevy_all.csv`
+- `KUPI_MCP_PRODUCTS_DIR`: override path for category CSV directory (defaults to `<data_dir>/produkty`)
+- `KUPI_MCP_SALES_FILE`: override path for sales CSV file (defaults to `<data_dir>/slevy_all.csv`)
 
 ## Endpoints
 
@@ -127,6 +130,7 @@ Railway should set `PORT` automatically. You can optionally set:
 
 - `KUPI_MCP_API_KEY`
 - `KUPI_MCP_API_KEY_HEADER`
+- `KUPI_MCP_DATA_DIR` (or `KUPI_MCP_PRODUCTS_DIR` + `KUPI_MCP_SALES_FILE`)
 
 Alternate Railway start command for SSE:
 

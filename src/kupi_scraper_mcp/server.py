@@ -13,9 +13,39 @@ from starlette.responses import JSONResponse, Response
 
 API_KEY_ENV_VAR = "KUPI_MCP_API_KEY"
 API_KEY_HEADER_ENV_VAR = "KUPI_MCP_API_KEY_HEADER"
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PRODUCTS_DIR = PROJECT_ROOT / "produkty"
-SALES_FILE = PROJECT_ROOT / "slevy_all.csv"
+DATA_DIR_ENV_VAR = "KUPI_MCP_DATA_DIR"
+PRODUCTS_DIR_ENV_VAR = "KUPI_MCP_PRODUCTS_DIR"
+SALES_FILE_ENV_VAR = "KUPI_MCP_SALES_FILE"
+
+
+def _resolve_project_root() -> Path:
+    configured_data_dir = os.environ.get(DATA_DIR_ENV_VAR, "").strip()
+    if configured_data_dir:
+        return Path(configured_data_dir).expanduser()
+
+    module_root = Path(__file__).resolve().parents[2]
+    cwd_root = Path.cwd()
+    cwd_repo_child = cwd_root / "kupi-scraper-mcp"
+    candidates = [module_root, cwd_root, cwd_repo_child]
+
+    for candidate in candidates:
+        if (candidate / "slevy_all.csv").is_file() and (candidate / "produkty").is_dir():
+            return candidate
+
+    for candidate in candidates:
+        if (candidate / "slevy_all.csv").is_file() or (candidate / "produkty").is_dir():
+            return candidate
+
+    return cwd_root
+
+
+PROJECT_ROOT = _resolve_project_root()
+PRODUCTS_DIR = Path(
+    os.environ.get(PRODUCTS_DIR_ENV_VAR, str(PROJECT_ROOT / "produkty"))
+).expanduser()
+SALES_FILE = Path(
+    os.environ.get(SALES_FILE_ENV_VAR, str(PROJECT_ROOT / "slevy_all.csv"))
+).expanduser()
 
 mcp = FastMCP(
     name="kupi-scraper-mcp",
@@ -182,6 +212,13 @@ def _payload(tool_name: str, input_echo: dict[str, Any], data: dict[str, Any]) -
 
 
 def _read_csv_rows(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.is_file():
+        raise FileNotFoundError(
+            f"CSV file not found: {csv_path}. "
+            f"Set {DATA_DIR_ENV_VAR}, {SALES_FILE_ENV_VAR}, or {PRODUCTS_DIR_ENV_VAR} "
+            "to point to your data directory/files."
+        )
+
     with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
         reader = DictReader(csv_file, delimiter=";")
         rows: list[dict[str, str]] = []
@@ -202,7 +239,13 @@ def _normalize_text(value: str) -> str:
 
 
 def _get_category_files() -> list[Path]:
-    return sorted(PRODUCTS_DIR.glob("*.csv"), key=lambda p: p.stem)
+    files = sorted(PRODUCTS_DIR.glob("*.csv"), key=lambda p: p.stem)
+    if not files:
+        raise FileNotFoundError(
+            f"No category CSV files found in: {PRODUCTS_DIR}. "
+            f"Set {DATA_DIR_ENV_VAR} or {PRODUCTS_DIR_ENV_VAR} to the directory with produkty/*.csv."
+        )
+    return files
 
 
 def _load_products_from_categories(categories: Optional[set[str]] = None) -> list[dict[str, Any]]:
